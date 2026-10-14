@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s # Как часто собирать метрики (раз в 15 секунд)
+
+scrape_configs:
+  # Задача для сбора метрик с главного API
+  - job_name: 'agora-api-metrics'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['agora-api:8080'] # Используем внутреннее имя контейнера и порт
+
+  # Если в будущем захочешь мониторить другие сервисы, просто добавь их сюда:
+  # - job_name: 'agora-likes-metrics'
+  #   metrics_path: '/actuator/prometheus'
+  #   static_configs:
+  #     - targets: ['agora-likes:8082']

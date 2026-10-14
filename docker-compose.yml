@@ -1,0 +1,306 @@
+# Secrets come from .env next to this file (see .env.example).
+# ${VAR:?} makes compose fail fast if a variable is missing.
+x-db-env: &db-env
+  DB_USER: ${DB_USER:?set DB_USER in .env}
+  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+x-rabbit-env: &rabbit-env
+  RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+
+services:
+  # --- 1. Шлюз (НОВАЯ ТОЧКА ВХОДА) ---
+  gateway:
+    build:
+      context: ./gateway-api
+    container_name: gateway
+    ports:
+      - "9000:9000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    networks:
+     - microservice-network
+    depends_on:
+      eureka-server:
+        condition: service_started
+      agora-api:
+        condition: service_started
+      agora-stats:
+        condition: service_started
+      agora-likes:
+        condition: service_started
+      agora-comments:
+        condition: service_started
+      config-server:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: agora-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # ВНУТРИ Docker-сети мы обращаемся к сервису по его имени: gateway
+      - BACKEND_URL=http://gateway:9000
+    depends_on:
+      - gateway
+    networks:
+      - microservice-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: agora-minio
+    ports:
+      - "9005:9000" # API порт (для кода)
+      - "9001:9001" # Web Console (для тебя, чтобы смотреть файлы в браузере)
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - microservice-network
+
+  # --- 2. Сервер Eureka ---
+  eureka-server:
+    build:
+      context: ./eureka-server
+    container_name: eureka-server
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # --- 3. База данных ---
+  db:
+    image: postgres:15-alpine
+    container_name: agora-db
+    environment:
+      - POSTGRES_USER=${DB_USER:?set DB_USER in .env}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env}
+      - POSTGRES_DB=my_twitter_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d my_twitter_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- 4. Брокер сообщений ---
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "62613:61613"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+    command: >
+      bash -c "rabbitmq-plugins enable --offline rabbitmq_stomp rabbitmq_web_stomp &&
+                  rabbitmq-server"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # --- 5. Agora API ---
+  agora-api:
+    build: ./agora-api
+    container_name: agora-api
+    environment:
+      <<: [*db-env, *rabbit-env]
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY in .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
+    networks:
+      - microservice-network
+    depends_on:
+      config-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # --- 6. Agora Statistic ---
+  agora-stats:
+    build: ./agora-stats
+    container_name: agora-stats
+    environment:
+      <<: *rabbit-env
+    # (Все будет браться из application.properties)
+    networks:
+      - microservice-network
+    depends_on:
+      agora-api:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- 7. Agora Likes ---
+  agora-likes:
+    build:
+      context: ./agora-likes
+    container_name: agora-likes
+    environment:
+      <<: [*db-env, *rabbit-env]
+    networks:
+      - microservice-network
+    depends_on:
+      config-server:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --spider -q http://localhost:8082/actuator/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- 8. Agora Comments ---
+  agora-comments:
+    build:
+      context: ./agora-comments
+    container_name: agora-comments
+    environment:
+      <<: [*db-env, *rabbit-env]
+    networks:
+      - microservice-network
+    depends_on:
+      config-server:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      agora-api:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --spider -q http://localhost:8083/actuator/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411" # Веб-интерфейс Zipkin
+    networks:
+      - microservice-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--spider", "http://localhost:9411/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  config-server:
+    build:
+      context: ./config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    networks:
+      - microservice-network
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      # Configs are pulled from GitHub (agora-config). Override in .env if needed.
+      CONFIG_GIT_LABEL: ${CONFIG_GIT_LABEL:-dev}
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8888/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # --- 8. Визуализатор логов (Dozzle) ---
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Даем доступ к Docker
+    ports:
+      - "8000:8080" # Интерфейс будет на порту 8000
+    networks:
+      - microservice-network
+
+    # --- 9. Prometheus (Сбор метрик) ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus # Сохраняем метрики при перезапуске
+    ports:
+      - "9090:9090" # Можно оставить для прямой отладки метрик (опционально)
+    networks:
+      - microservice-network
+    depends_on:
+      - agora-api
+
+    # --- 10. Grafana (Визуализация) ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000" # Фронтенд уже занял 3000, поэтому вешаем на 3001
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env} # логин: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - microservice-network
+    depends_on:
+      - prometheus
+
+# --- Сети и Вольюмы ---
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  microservice-network:
+    driver: bridge

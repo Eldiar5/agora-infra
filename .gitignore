@@ -1,0 +1,33 @@
+# --- agora-infra (docker-compose, postgres-init, prometheus, load-tests) ---
+
+# Service directories: each lives in its own repository
+/agora-api/
+/agora-comments/
+/agora-likes/
+/agora-stats/
+/gateway-api/
+/config-server/
+/eureka-server/
+/frontend/
+/config-repo/
+
+# Build output
+target/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

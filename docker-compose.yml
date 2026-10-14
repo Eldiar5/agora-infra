@@ -1,11 +1,5 @@
 # Secrets come from .env next to this file (see .env.example).
 # ${VAR:?} makes compose fail fast if a variable is missing.
-x-db-env: &db-env
-  DB_USER: ${DB_USER:?set DB_USER in .env}
-  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
-x-rabbit-env: &rabbit-env
-  RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
-  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
 
 services:
   # --- 1. Шлюз (НОВАЯ ТОЧКА ВХОДА) ---
@@ -130,7 +124,10 @@ services:
     build: ./agora-api
     container_name: agora-api
     environment:
-      <<: [*db-env, *rabbit-env]
+      DB_USER: ${DB_USER:?set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY in .env}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
@@ -155,7 +152,8 @@ services:
     build: ./agora-stats
     container_name: agora-stats
     environment:
-      <<: *rabbit-env
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     # (Все будет браться из application.properties)
     networks:
       - microservice-network
@@ -177,7 +175,10 @@ services:
       context: ./agora-likes
     container_name: agora-likes
     environment:
-      <<: [*db-env, *rabbit-env]
+      DB_USER: ${DB_USER:?set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     networks:
       - microservice-network
     depends_on:
@@ -194,6 +195,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
 
   # --- 8. Agora Comments ---
   agora-comments:
@@ -201,7 +203,10 @@ services:
       context: ./agora-comments
     container_name: agora-comments
     environment:
-      <<: [*db-env, *rabbit-env]
+      DB_USER: ${DB_USER:?set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     networks:
       - microservice-network
     depends_on:
@@ -218,6 +223,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
 
   zipkin:
     image: openzipkin/zipkin

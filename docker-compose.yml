@@ -119,6 +119,60 @@ services:
       timeout: 10s
       retries: 5
 
+  # --- 4.1 Kafka (KRaft: брокер и контроллер в одном процессе, без ZooKeeper) ---
+  kafka:
+    image: apache/kafka:4.1.0
+    container_name: kafka
+    ports:
+      - "9094:9094" # EXTERNAL — для сервисов, запущенных из IntelliJ (профиль local)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Три слушателя: INTERNAL — для контейнеров в Docker-сети, EXTERNAL — для хоста, CONTROLLER — служебный (KRaft)
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      # Адреса, которые брокер сообщает клиентам после первого подключения — клиент дальше ходит ИМЕННО по ним
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Один брокер — служебные топики не могут иметь больше одной реплики
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Автосозданные топики получат 3 партиции — чтобы было видно распределение по ключу
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # По умолчанию брокер берёт 1 ГБ heap — для учебного стека в WSL2 достаточно 512 МБ
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # --- 4.2 Kafka UI (топики, сообщения, consumer groups, lag) ---
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.3.0
+    container_name: kafka-ui
+    ports:
+      - "8085:8080" # http://localhost:8085
+    environment:
+      KAFKA_CLUSTERS_0_NAME: agora
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      JAVA_OPTS: -Xms128m -Xmx256m
+    networks:
+      - microservice-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   # --- 5. Agora API ---
   agora-api:
     build: ./agora-api
@@ -134,6 +188,8 @@ services:
     networks:
       - microservice-network
     depends_on:
+      kafka:
+        condition: service_healthy
       config-server:
         condition: service_healthy
       db:
@@ -158,6 +214,8 @@ services:
     networks:
       - microservice-network
     depends_on:
+      kafka:
+        condition: service_healthy
       agora-api:
         condition: service_healthy
       config-server:
@@ -190,6 +248,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_started
+      kafka:
+        condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "wget --spider -q http://localhost:8082/actuator/health || exit 1" ]
       interval: 10s
@@ -217,6 +277,8 @@ services:
       db:
         condition: service_healthy
       agora-api:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "wget --spider -q http://localhost:8083/actuator/health || exit 1" ]
@@ -306,6 +368,7 @@ volumes:
   minio_data:
   prometheus_data:
   grafana_data:
+  kafka_data:
 
 networks:
   microservice-network:

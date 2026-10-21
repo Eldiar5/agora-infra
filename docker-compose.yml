@@ -207,10 +207,7 @@ services:
   agora-stats:
     build: ./agora-stats
     container_name: agora-stats
-    environment:
-      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
-    # (Все будет браться из application.properties)
+    # Секретов нет: события читаются из Kafka, конфиг приходит из config-server
     networks:
       - microservice-network
     depends_on:
@@ -235,8 +232,6 @@ services:
     environment:
       DB_USER: ${DB_USER:?set DB_USER in .env}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
-      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     networks:
       - microservice-network
     depends_on:
@@ -246,8 +241,6 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
-      rabbitmq:
-        condition: service_started
       kafka:
         condition: service_healthy
     healthcheck:
